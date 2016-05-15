@@ -1,99 +1,225 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-"""Coding exercise that reconstructs event timeline based on partial eyewitness accounts.
+"""
+Timeline class combines partial lists of ordered events into longest possible unambiguous sequences.
 """
 
 import collections
-import logging
 
-recursion_depth = 0
-def log_debug(msg):
-    logging.debug("{0}{1}".format('  '*recursion_depth, msg))
+import logging_for_recursion as logging
+
 
 class Timeline(object):
     def __init__(self, partial_timelines=None):
-        """Initialize instance with partial timelines if provided. 
+        """Initialize Timeline instance with provided partial timelines.
 
-        If no partial timelines are provided at instantiation, they can be added later
-        using the merge_partial_timeline method.
+        Partial timelines can be added later using the add_partial_timeline method.
 
         :type partial_timelines: [[unicode]]
-        :arg partial_timelines: list of ordered lists of strings that are event names
+        :arg partial_timelines: list of ordered lists of strings that are events
 
         """
-        # Map event names to sets of preceding events
-        self._preceding_events = collections.defaultdict(set)
+        # Map events to sets of subsequent events
+        self._subsequent_events = collections.defaultdict(set)
 
         # Merge partial timelines
         for timeline in partial_timelines or []:
-            self.merge_partial_timeline(timeline)
+            self.add_partial_timeline(timeline)
 
-    def merge_partial_timeline(self, partial_timeline):
-        """
+    def add_partial_timeline(self, partial_timeline):
+        """Add events from provided timeline to internal data.
+
         :type partial_timeline: [<unicode>
-        :arg partial_timeline: ordered list of strings that are event names
-        """
-        for i, event in enumerate(partial_timeline):
-            if event not in self._preceding_events:
-                self._preceding_events[event] = set()
-            for preceding_event in partial_timeline[0:i]:
-                self._add_preceding_event(event, preceding_event)
-            for subsequent_event in partial_timeline[i+1:]:
-                self._add_preceding_event(subsequent_event, event)
+        :arg partial_timeline: ordered list of strings that are events
 
-    def _add_preceding_event(self, event, preceding_event):
         """
+        for i, event in enumerate(partial_timeline or []):
+            if event not in self._subsequent_events:
+                self._subsequent_events[event] = set()
+            if i > 0:
+                self._add_subsequent_event(partial_timeline[i-1], event)
+            if i < len(partial_timeline)-1:
+                self._add_subsequent_event(event, partial_timeline[i+1])
+
+    def get_merged_timelines(self):
+        """Merge partial timelines to generate longest possible unambiguous sequences of events.
+
+        Multiple timelines will be returned if a single absolute ordering of events cannot
+        be determined based on the partial timelines. For example, if one timeline specifes
+        that event 'x' occurred after 'w' and before 'z', and another timeline specifies that
+        event 'y' occurred after 'w' and before 'z', the absolute ordering of 'x' and 'y' 
+        cannot be determined, and multiple timelines will be returned.
+
+        :rtype: [[unicode]]
+        :return: list of ordered lists of events
+
+        """
+        return self._get_merged_timelines__recurse()
+
+
+    # private methods
+
+    def _add_subsequent_event(self, event, subsequent_event):
+        """Add specified subsequent_event to self._subsequent_events for event.
+
+        :raise: ValueError if specified subsequent_event is already recorded as coming before event
+
         :type event: <unicode>
         :arg event: name of current event
 
-        :type preceding_event: <unicode>
-        :arg preceding_event: name of event preceding current event
+        :type subsequent_event: <unicode>
+        :arg subsequent_event: name of event succeeding current event
 
         """
-        self._preceding_events[event].add(preceding_event)
+        subsequent_events = self._get_all_subsequent_events(subsequent_event) 
+        if subsequent_events and event in subsequent_events:
+            raise ValueError(
+                "Contradiction detected: event '{0}' comes before and after event '{1}'".format(
+                    event, subsequent_event))
+        self._subsequent_events[event].add(subsequent_event)
 
-    def get_merged_timelines(self):
-        log_debug("Merging timelines...")
-        used_events = set()
-        merged_timelines = self._get_merged_timelines__recurse(used_events)
-        log_debug("Merged timelines: {0}".format(merged_timelines))
-        return merged_timelines
+    def _get_all_subsequent_events(self, event):
+        direct_events = self._subsequent_events.get(event)
+        if not direct_events:
+            return None
+        subsequent_events = set()
+        for event in direct_events:
+            subsequent_events.add(event)
+            indirect_events = self._get_all_subsequent_events(event)
+            if indirect_events:
+                subsequent_events.update(indirect_events)
+        return subsequent_events
 
-    def _get_merged_timelines__recurse(self, used_events):
-        if len(used_events) == len(self._preceding_events.keys()):
+    def _combine_overlapping_timelines(self, timelines):
+        """Filter out timelines that are exactly contained by other timelines.
+
+        :rtype: [[unicode]]
+        :return: subset of timelines with unique event sequences
+
+        :type timelines: [[unicode]]
+        :arg timelines: list of ordered lists of events
+
+        """
+        if len(timelines) == 1:
+            return [timelines[0]]
+        logging.debug("Combining overlapping timelines {0}".format(timelines))
+
+        # Generate timeline signatures by joining ordered events with '|' character
+        unique_timelines = {'|'.join(t): t for t in timelines}
+        timeline_sigs = set(unique_timelines.keys())
+
+        # Delete any timelines that are exactly contained within another timeline
+        for timeline_sig in timeline_sigs:
+            other_sigs = timeline_sigs.difference([timeline_sig])
+            for contained_sig in [s for s in other_sigs if s in timeline_sig]:
+                logging.debug("Timeline {0} is contained in {1}".format(
+                    unique_timelines[contained_sig], unique_timelines[timeline_sig]))
+                del unique_timelines[contained_sig]
+        return unique_timelines.values()
+
+    def _find_first_events(self):
+        """Find events with no preceding events.
+
+        :rtype: set(unicode)
+        :return: set of events that have no preceding events
+
+        """
+        all_events = set(self._subsequent_events.keys())
+        all_subsequent_events = set()
+        for subsequent_events in self._subsequent_events.values():
+            [all_subsequent_events.add(e) for e in subsequent_events]
+        return all_events.difference(all_subsequent_events)
+
+    def _get_next_events(self, from_event=None):
+        """Find all events that succeed specified event.
+
+        :rtype: set(unicode)
+        :return: set of events that succeed specified event
+
+        :type from_event: unicode
+        :arg from_event: event for which subsequent events should be found
+
+        """
+        if not from_event:
+            return self._find_first_events()
+        return self._subsequent_events.get(from_event) or set()
+
+    def _get_merged_timelines__recurse(self, from_event=None):
+        """Internal recursive method for generating ordered timelines starting from specified event.
+
+        :rtype: [[unicode]]
+        :return: list of ordered lists of events
+
+        :type from_event: unicode
+        :arg from_event: optional name of starting event; None to begin
+
+        """
+        next_events = self._get_next_events(from_event=from_event)
+        if not next_events:
             return [[]]
 
-        possible_timelines = []
-        for next_event in self._get_next_unused_events(used_events):
-            used_events.add(next_event)
-            log_debug("Found next event: {0}".format(next_event))
-            log_debug("Used events: {0}".format(sorted(list(used_events))))
-            global recursion_depth
-            recursion_depth += 1
-            for possible_timeline in self._get_merged_timelines__recurse(used_events):
-                possible_timelines.append([next_event] + possible_timeline)
-            recursion_depth -= 1
-            used_events.remove(next_event)
-        return possible_timelines
+        # Generate timelines starting at each possible next event
+        merged_timelines = []
+        for next_event in next_events:
+            logging.debug("from_event={0}".format(from_event))
+            logging.debug("next_event={0}".format(next_event))
+            logging.increment_recursion_depth()
+            sub_timelines = self._get_merged_timelines__recurse(from_event=next_event)
 
-    def _get_next_unused_events(self, used_events):
-        """Find all events with no unused, preceding events.
-
-        :rtype: [unicode]
-        :return: names of unused events that have no preceding, unused events
-
-        :type used_events: set
-        :arg used_events: set of events that should not be considered
-
-        """
-        next_events = []
-        for event in filter(lambda e: e not in used_events, self._preceding_events.keys()):
-            preceding_events = self._preceding_events[event].difference(used_events)
-            if len(preceding_events) == 0:
-                next_events.append(event)
-        return next_events
-        
+            # Discard sub_timelines that are represented by other sub_timelines.
+            # In practice, I think that duplicate timelines will match the end of another
+            # timeline, but look for any overlap just in case.
+            for timeline in self._combine_overlapping_timelines(sub_timelines):
+                merged_timelines.append([next_event] + timeline)
+            logging.increment_recursion_depth(-1)
+        logging.debug("Returning timelines {0}".format(merged_timelines))
+        return merged_timelines
 
 
-        
+if __name__ == '__main__':
+    """Command-line driver for merging arbitrary timeline data and displaying merged timelines.
+    """
+    import argparse
+    import logging as pylogging
+    import json
+    import pprint
+
+    parser = argparse.ArgumentParser(
+        description='Combine partial timelines into longest possible sequences of events',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    parser.add_argument('infile',
+                        help='input filename containing JSON list of ordered event sequences')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-v', '--verbose', action='store_true', help='info-level output')
+    group.add_argument('-V', '--very-verbose', action='store_true', help='debug-level output')
+    args = parser.parse_args()
+    
+    # set logging to INFO or DEBUG based on command line arg
+    log_level = pylogging.ERROR
+    if args.verbose:
+        log_level = pylogging.INFO
+    elif args.very_verbose:
+        log_level = pylogging.DEBUG
+    pylogging.basicConfig(level=log_level)
+
+    # read data from input file
+    partial_timelines = None
+    with open(args.infile) as infile:
+        try:
+            partial_timelines = json.loads(infile.read())
+        except ValueError:
+            raise
+
+    if partial_timelines:
+        pylogging.info('Input timelines: {0}'.format(partial_timelines))
+
+        # Merge partial timelines
+        timeline = Timeline(partial_timelines=partial_timelines)
+        merged_timelines = timeline.get_merged_timelines()
+
+        print('\nMerged timelines:')
+        for t in merged_timelines:
+            print(t)
+
+
