@@ -162,14 +162,36 @@ class TimelineTests(unittest.TestCase):
     def test_get_merged_timelines__partial_merge(self):
         """Verify that ambiguous partial timelines are merged as far as possible.
         """
-        partial_timelines = [['two', 'three', 'four', 'six'],
+        partial_timelines = [['two', 'three', 'four', 'seven', 'eight'],
                              ['one', 'two', 'five', 'six', 'seven']]
         timeline = Timeline(partial_timelines=partial_timelines)
 
         merged_timelines = timeline.get_merged_timelines()
         expected_timelines = [
-            ['one', 'two', 'three', 'four', 'six', 'seven'],
-            ['one', 'two', 'five', 'six', 'seven']]
+            ['one', 'two', 'three', 'four', 'seven', 'eight'],
+            ['one', 'two', 'five', 'six', 'seven', 'eight']]
+        self.assertEqual(len(expected_timelines), len(merged_timelines))
+        for merged_timeline in merged_timelines:
+            self.assertTrue(merged_timeline in expected_timelines)
+
+    def test_get_merged_timelines__multiple_partial_merge(self):
+        """Verify that ambiguous partial timelines are merged in multiple places.
+
+        Note that generating four timelines may not be the desired behavior. Rather, we 
+        would like two timelines with merged fronts, middles, and ends, one timeline with 
+        the divergent sections of the first partial timeline and the other with the
+        divergent sections of the second partial timeline.
+        """
+        partial_timelines = [['two', 'three', 'four', 'six', 'seven', 'eight', 'nine', 'eleven'],
+                             ['one', 'two', 'five', 'six', 'seven', 'ten', 'eleven', 'twelve']]
+        timeline = Timeline(partial_timelines=partial_timelines)
+
+        merged_timelines = timeline.get_merged_timelines()
+        expected_timelines = [
+            ['one', 'two', 'three', 'four', 'six', 'seven', 'eight', 'nine', 'eleven', 'twelve'],
+            ['one', 'two', 'three', 'four', 'six', 'seven', 'ten', 'eleven', 'twelve'],
+            ['one', 'two', 'five', 'six', 'seven', 'eight', 'nine', 'eleven', 'twelve'],
+            ['one', 'two', 'five', 'six', 'seven', 'ten', 'eleven', 'twelve']]
         self.assertEqual(len(expected_timelines), len(merged_timelines))
         for merged_timeline in merged_timelines:
             self.assertTrue(merged_timeline in expected_timelines)
