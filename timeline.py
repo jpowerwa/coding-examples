@@ -5,6 +5,7 @@ Timeline class combines partial lists of ordered events into longest possible un
 """
 
 import collections
+import itertools
 
 import logging_for_recursion as logging
 
@@ -78,19 +79,7 @@ class Timeline(object):
                     event, subsequent_event))
         self._subsequent_events[event].add(subsequent_event)
 
-    def _get_all_subsequent_events(self, event):
-        direct_events = self._subsequent_events.get(event)
-        if not direct_events:
-            return None
-        subsequent_events = set()
-        for event in direct_events:
-            subsequent_events.add(event)
-            indirect_events = self._get_all_subsequent_events(event)
-            if indirect_events:
-                subsequent_events.update(indirect_events)
-        return subsequent_events
-
-    def _combine_overlapping_timelines(self, timelines):
+    def _dedupe_timelines(self, timelines):
         """Filter out timelines that are exactly contained by other timelines.
 
         :rtype: [[unicode]]
@@ -102,20 +91,38 @@ class Timeline(object):
         """
         if len(timelines) == 1:
             return [timelines[0]]
+
         logging.debug("Combining overlapping timelines {0}".format(timelines))
 
-        # Generate timeline signatures by joining ordered events with '|' character
-        unique_timelines = {'|'.join(t): t for t in timelines}
-        timeline_sigs = set(unique_timelines.keys())
+        # Since we trust the order of the events within each timeline, we can find
+        # timelines that are included in another timeline by comparing sets of events.
+        timeline_events = [set(events) for events in timelines]
 
-        # Delete any timelines that are exactly contained within another timeline
-        for timeline_sig in timeline_sigs:
-            other_sigs = timeline_sigs.difference([timeline_sig])
-            for contained_sig in [s for s in other_sigs if s in timeline_sig]:
-                logging.debug("Timeline {0} is contained in {1}".format(
-                    unique_timelines[contained_sig], unique_timelines[timeline_sig]))
-                del unique_timelines[contained_sig]
-        return unique_timelines.values()
+        # Build list of booleans indicating if each timeline is unique or not.
+        unique_timeline_selectors = [True for i in range(len(timelines))]
+
+        for i in range(len(timelines)-1):
+            i_events = timeline_events[i]
+            for j in range(i+1, len(timelines)):
+                j_events = timeline_events[j]
+                if i_events.issubset(j_events):
+                    unique_timeline_selectors[i] = False
+                if j_events.issubset(i_events):
+                    unique_timeline_selectors[j] = False
+
+        return itertools.compress(timelines, unique_timeline_selectors)
+
+    def _get_all_subsequent_events(self, event):
+        direct_events = self._subsequent_events.get(event)
+        if not direct_events:
+            return None
+        subsequent_events = set()
+        for event in direct_events:
+            subsequent_events.add(event)
+            indirect_events = self._get_all_subsequent_events(event)
+            if indirect_events:
+                subsequent_events.update(indirect_events)
+        return subsequent_events
 
     def _find_first_events(self):
         """Find events with no preceding events.
@@ -169,7 +176,7 @@ class Timeline(object):
             # Discard sub_timelines that are represented by other sub_timelines.
             # In practice, I think that duplicate timelines will match the end of another
             # timeline, but look for any overlap just in case.
-            for timeline in self._combine_overlapping_timelines(sub_timelines):
+            for timeline in self._dedupe_timelines(sub_timelines):
                 merged_timelines.append([next_event] + timeline)
             logging.increment_recursion_depth(-1)
         logging.debug("Returning timelines {0}".format(merged_timelines))
